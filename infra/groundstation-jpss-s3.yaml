@@ -1,0 +1,140 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  ember-gs: AWS Ground Station mission profile that receives the JPSS
+  (NOAA-20 / NOAA-21 / SNPP) X-band direct-broadcast downlink as digital IF and
+  delivers it straight to S3, with no EC2 instance. Deploying this stack is free:
+  you only pay when you reserve a contact.
+
+  Compare with AWS's official example template
+  "AquaSnppJpss-1TerraDigIfS3DataDelivery.yml" in the AWS Ground Station User
+  Guide (Examples > Public broadcast satellite utilizing Amazon S3 data delivery)
+  before your first contact.
+
+Parameters:
+  BucketSuffix:
+    Type: String
+    Description: Lower-case suffix to make the bucket name globally unique (e.g. your initials + digits).
+    AllowedPattern: "[a-z0-9-]{3,30}"
+  CenterFrequencyMHz:
+    Type: Number
+    Default: 7812
+    Description: JPSS HRD X-band downlink centre frequency (MHz).
+  BandwidthMHz:
+    Type: Number
+    Default: 30
+    Description: Capture bandwidth (MHz). Under 40 MHz is billed as narrowband.
+  PrePassSeconds:
+    Type: Number
+    Default: 120
+  PostPassSeconds:
+    Type: Number
+    Default: 60
+  RawDataRetentionDays:
+    Type: Number
+    Default: 14
+    Description: Raw captures are large (gigabytes per pass); expire them to keep S3 costs near zero.
+
+Resources:
+  # Bucket name MUST start with "aws-groundstation" for S3 data delivery.
+  CaptureBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "aws-groundstation-ember-${BucketSuffix}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-raw-captures
+            Status: Enabled
+            Prefix: raw/
+            ExpirationInDays: !Ref RawDataRetentionDays
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true # new captures trigger the processing pipeline
+
+  GroundStationDeliveryRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: groundstation.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: write-captures
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource: !GetAtt CaptureBucket.Arn
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "${CaptureBucket.Arn}/*"
+
+  TrackingConfig:
+    Type: AWS::GroundStation::Config
+    Properties:
+      Name: ember-tracking
+      ConfigData:
+        TrackingConfig:
+          Autotrack: PREFERRED
+
+  JpssDownlinkDigIfConfig:
+    Type: AWS::GroundStation::Config
+    Properties:
+      Name: ember-jpss-xband-digif
+      ConfigData:
+        AntennaDownlinkConfig:
+          SpectrumConfig:
+            CenterFrequency:
+              Value: !Ref CenterFrequencyMHz
+              Units: MHz
+            Bandwidth:
+              Value: !Ref BandwidthMHz
+              Units: MHz
+            Polarization: RIGHT_HAND
+
+  S3RecordingConfig:
+    Type: AWS::GroundStation::Config
+    Properties:
+      Name: ember-s3-recording
+      ConfigData:
+        S3RecordingConfig:
+          BucketArn: !GetAtt CaptureBucket.Arn
+          RoleArn: !GetAtt GroundStationDeliveryRole.Arn
+          Prefix: "raw/{satellite_id}/{year}/{month}/{day}"
+
+  JpssMissionProfile:
+    Type: AWS::GroundStation::MissionProfile
+    Properties:
+      Name: ember-jpss-digif-s3
+      ContactPrePassDurationSeconds: !Ref PrePassSeconds
+      ContactPostPassDurationSeconds: !Ref PostPassSeconds
+      MinimumViableContactDurationSeconds: 180
+      TrackingConfigArn: !Ref TrackingConfig
+      DataflowEdges:
+        - Source: !Ref JpssDownlinkDigIfConfig
+          Destination: !Ref S3RecordingConfig
+
+Outputs:
+  BucketName:
+    Value: !Ref CaptureBucket
+  MissionProfileArn:
+    Value: !Ref JpssMissionProfile
+  DeliveryRoleArn:
+    Value: !GetAtt GroundStationDeliveryRole.Arn
