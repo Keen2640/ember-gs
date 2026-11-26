@@ -4,6 +4,8 @@
   ember synth    out.bin --invert --ber 1e-4     generate a test downlink
   ember decode   capture.bin                     decode a raw bit stream into packets
   ember firms    --bbox W,S,E,N --source ...     record FIRMS detections + latency
+  ember grid now --zone LZ_NORTH                 live ERCOT price + grid carbon intensity
+  ember grid backtest --year 2025                charging strategies on a year of real prices
 """
 
 from __future__ import annotations
@@ -92,6 +94,40 @@ def cmd_firms(a: argparse.Namespace) -> int:
         time.sleep(a.interval)
 
 
+def cmd_grid_now(a: argparse.Namespace) -> int:
+    from .grid import carbon, ercot
+
+    prices = ercot.live_prices()[a.zone]
+    t, p = prices[-1]
+    mix_t, mix = ercot.live_fuel_mix()[-1]
+    ci = carbon.intensity(mix)
+    top = ", ".join(f"{f} {v:.0%}" for f, v in list(carbon.shares(mix).items())[:4])
+    print(f"{a.zone} real-time price   ${p:,.2f}/MWh  ({p / 10:.2f} ¢/kWh wholesale), interval from {t:%H:%M} UTC")
+    print(f"Today's range              ${min(x for _, x in prices):,.2f} to ${max(x for _, x in prices):,.2f}/MWh")
+    print(f"Grid carbon intensity      {ci:.0f} kg CO2/MWh at {mix_t:%H:%M} UTC  ({top})")
+    return 0
+
+
+def cmd_grid_backtest(a: argparse.Namespace) -> int:
+    from .charging.backtest import BacktestConfig, run
+    from .charging.optimizer import Vehicle
+    from .grid.ercot import PriceSeries, download_year
+
+    path = os.path.join(a.data_dir, f"ercot_{a.zone}_{a.year}.npz")
+    if os.path.exists(path):
+        series = PriceSeries.load(path)
+    else:
+        print(f"downloading ERCOT {a.year} prices (about 15 MB, ~1 min to parse)...", file=sys.stderr)
+        series = download_year(a.year, a.zone)
+        os.makedirs(a.data_dir, exist_ok=True)
+        series.save(path)
+    cfg = BacktestConfig(energy_kwh=a.kwh, vehicle=Vehicle(charger_kw=a.charger_kw))
+    r = run(series, cfg)
+    print(f"{a.zone} {a.year}: {r.sessions} nights, {a.kwh:g} kWh/night, {a.charger_kw:g} kW charger, wholesale prices\n")
+    print(r.table())
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="ember", description="Cloud satellite ground station for wildfire detection")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -128,6 +164,19 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--watch", action="store_true")
     s.add_argument("--interval", type=int, default=300)
     s.set_defaults(func=cmd_firms)
+
+    g = sub.add_parser("grid", help="Texas grid: live prices, carbon, charging backtests")
+    gsub = g.add_subparsers(dest="grid_cmd", required=True)
+    s = gsub.add_parser("now", help="live ERCOT price and carbon intensity")
+    s.add_argument("--zone", default="LZ_NORTH", help="LZ_NORTH (Dallas), LZ_HOUSTON, LZ_SOUTH, LZ_WEST, ...")
+    s.set_defaults(func=cmd_grid_now)
+    s = gsub.add_parser("backtest", help="compare charging strategies on a year of ERCOT prices")
+    s.add_argument("--year", type=int, default=2025)
+    s.add_argument("--zone", default="LZ_NORTH")
+    s.add_argument("--kwh", type=float, default=30.0, help="energy added per night")
+    s.add_argument("--charger-kw", type=float, default=11.5)
+    s.add_argument("--data-dir", default="data")
+    s.set_defaults(func=cmd_grid_backtest)
 
     a = p.parse_args(argv)
     if a.cmd == "firms" and not a.source:

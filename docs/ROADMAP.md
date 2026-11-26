@@ -12,6 +12,19 @@ start over FIRMS. Paid steps are marked 💲; everything else is free.
 - [x] NASA FIRMS client + latency recorder
 - [x] PostGIS schema with the `head_start` view
 
+## Grid track (current focus)
+- [x] ERCOT live + historical prices, live fuel mix, carbon intensity, EIA client
+- [x] Exact charging optimizer + backtester (immediate / off-peak / forecast / oracle)
+- [ ] Forecasters: gradient boosting with load/wind/temperature features, quantile spike model; target the 6.4% → 18.7% gap
+- [ ] Multi-year backtests (2021 Winter Storm Uri, 2023 heat emergencies), carbon-weighted objective
+- [ ] Tesla Fleet API module: OAuth, virtual key pairing, signed commands, dry-run mode
+- [ ] Fleet Telemetry receiver on AWS + TimescaleDB
+- [ ] Re-plan every 15 min (MPC) on the real car; 8-week measured results
+- [ ] GOES-19 solar nowcasting feature
+- [ ] Fleet simulator (C++/Rust) + ADMM coordination vs. herding; grid-emergency replays
+
+## Satellite track
+
 ## Day 2: accounts + a free baseline
 - [ ] FIRMS MAP_KEY, Earthdata login, AWS MFA, budget stack deployed, onboarding request sent
 - [ ] FIRMS latency recorder running continuously (South Africa, Chile/Argentina, Middle East boxes)

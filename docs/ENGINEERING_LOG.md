@@ -44,3 +44,33 @@ with mostly 0 corrections.
 US and Canada built on direct-readout stations. A fair "faster than FIRMS"
 claim has to be measured elsewhere: Cape Town, Punta Arenas and Bahrain are
 AWS sites covering fire-prone regions.
+
+## Day 2: pivot to grid-aware EV charging
+
+**Why the pivot.** Fires are rare; charging happens every day. ERCOT gives
+public 15-minute prices, a 5-minute fuel mix and yearly archives, which is
+enough to build and measure a real system immediately. The satellite pipeline
+stays (GOES imagery will feed solar nowcasting).
+
+**Load zones are listed twice.** The yearly archive has every load-zone price
+under two settlement-point types: `LZ` and `LZEW` (energy-weighted). The first
+parse produced 70,080 intervals for a 35,040-interval year. The dollar result
+barely moved because the two series are nearly identical, but it was wrong.
+The parser now filters on `LZ` by default and *raises* on duplicate
+timestamps, so this can't come back silently.
+
+**DST, the classic bug source.** ERCOT uses hour-ending Central Prevailing
+Time with a "repeated hour" flag on the autumn DST day. Everything is
+converted once to UTC interval starts (using `fold=1` for the repeated hour),
+and a test pins the November 2, 2025 case.
+
+**EIA returned 504s.** The v2 grid-monitor endpoint timed out repeatedly
+(server side; the key itself was valid). The client retries with exponential
+backoff, and live carbon comes from ERCOT's own 5-minute fuel mix, which is
+fresher anyway.
+
+**First backtest (2025, Dallas).** Off-peak scheduling alone saves 52% versus
+charging at plug-in. A seasonal-naive forecast + exact optimizer adds 6.4% on
+top. Perfect foresight would add 18.7%. Price data has 891 negative-price
+intervals and a maximum of $3,735/MWh, so spikes dominate: a forecaster that
+predicts *spike risk* (quantiles) matters more than one that nails the median.

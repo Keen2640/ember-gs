@@ -21,6 +21,16 @@ Leave this running for a few days (on your laptop, or later as a scheduled Lambd
 
 NOAA's JPSS data on AWS (`s3://noaa-nesdis-n20-pds` etc.) needs **no account at all**.
 
+## 1b. Grid data keys (free)
+
+| What | Where | Status |
+|---|---|---|
+| **EIA API key** | https://www.eia.gov/opendata/ | ✅ done |
+| **ERCOT API account** | https://apiexplorer.ercot.com | ✅ done (the current code uses ERCOT's public pages and archives, which need no key) |
+| NREL API key (solar data, later) | https://developer.nrel.gov/signup/ | ⏳ |
+
+**Keys never go in the repo.** Put them in a local `.env` (already gitignored; see `.env.example`) and load it with `set -a; . ./.env; set +a`.
+
 ## 2. AWS account safety (do this before anything else)
 
 1. Turn on **MFA** for the root user and create an IAM user or SSO identity for daily use.
