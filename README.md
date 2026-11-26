@@ -5,6 +5,10 @@ Two systems built on one data platform:
 1. **Grid-aware EV charging / virtual power plant.** Forecasts Texas (ERCOT) electricity prices and carbon intensity, optimizes when a real Tesla charges, and scales to coordinating a simulated EV fleet during grid emergencies. Design: [docs/GRID_DESIGN.md](docs/GRID_DESIGN.md)
 2. **Cloud satellite ground station for wildfire detection** (below).
 
+### Tesla integration (charging only, dry-run by default)
+
+`ember tesla plan` builds tonight's charging plan from ERCOT **day-ahead** prices and the car's charge state, then converts it into timed `set_charging_amps` / `charge_start` / `charge_stop` commands. Signed commands, an allowlist and a monthly request budget are built in. Setup: [docs/TESLA.md](docs/TESLA.md)
+
 ### Grid quickstart
 
 ```bash
@@ -102,7 +106,9 @@ src/ember/ccsds/    link layer: randomizer, reed_solomon, framing, aos, packets,
 src/ember/orbit/    TLEs (NOAA S3 / CelesTrak), AWS station sites, pass prediction + cost
 src/ember/firms/    NASA FIRMS client + latency store
 src/ember/grid/     ERCOT prices + fuel mix, carbon intensity, EIA client
-src/ember/charging/ exact charging optimizer, historical backtester
+src/ember/charging/ exact charging optimizer, historical backtester, tonight planner
+src/ember/tesla/    Fleet API: OAuth, partner registration, allowlisted commands, budget
+pages/              GitHub Pages site: public key + OAuth callback
 src/ember/aws_gs.py AWS Ground Station API wrapper (reservations need --yes and a budget cap)
 infra/              CloudFormation: mission profile + S3 delivery, budget guardrail
 db/schema.sql       PostGIS schema

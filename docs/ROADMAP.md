@@ -17,7 +17,10 @@ start over FIRMS. Paid steps are marked 💲; everything else is free.
 - [x] Exact charging optimizer + backtester (immediate / off-peak / forecast / oracle)
 - [ ] Forecasters: gradient boosting with load/wind/temperature features, quantile spike model; target the 6.4% → 18.7% gap
 - [ ] Multi-year backtests (2021 Winter Storm Uri, 2023 heat emergencies), carbon-weighted objective
-- [ ] Tesla Fleet API module: OAuth, virtual key pairing, signed commands, dry-run mode
+- [x] Tesla Fleet API module: OAuth, partner registration, allowlisted charging commands, dry-run, request budget
+- [x] Tonight planner from ERCOT day-ahead prices → timed charging commands
+- [ ] Owner setup on a real car: keys on GitHub Pages, register, login, virtual key pairing
+- [ ] Day-ahead price as a backtest strategy and forecast feature
 - [ ] Fleet Telemetry receiver on AWS + TimescaleDB
 - [ ] Re-plan every 15 min (MPC) on the real car; 8-week measured results
 - [ ] GOES-19 solar nowcasting feature

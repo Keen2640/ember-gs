@@ -74,3 +74,20 @@ charging at plug-in. A seasonal-naive forecast + exact optimizer adds 6.4% on
 top. Perfect foresight would add 18.7%. Price data has 891 negative-price
 intervals and a maximum of $3,735/MWh, so spikes dominate: a forecaster that
 predicts *spike risk* (quantiles) matters more than one that nails the median.
+
+## Day 3: Tesla integration
+
+**Tesla approved the app** (`ember-gs`) with the minimum two scopes:
+vehicle data and charging management. "Vehicle Commands" (unlock, remote
+start) was deliberately left out, and the client also enforces an allowlist
+of four charging commands, so a bug can't do anything else.
+
+**The market already forecasts tonight.** ERCOT publishes next-day hourly
+day-ahead prices around 13:30 CT, so an evening plan can be built on the
+market's own forecast instead of the seasonal-naive one. The page for the
+next day exists before it's published, just empty, and the parser returns
+nothing rather than crashing.
+
+**Cost discipline.** Tesla meters API calls; wake-ups are the most expensive.
+`status` never wakes the car, and a persistent per-month budget refuses calls
+past the caps.

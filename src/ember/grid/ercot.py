@@ -164,3 +164,39 @@ def live_fuel_mix() -> list[tuple[datetime, dict[str, float]]]:
     import json
 
     return parse_fuel_mix(json.loads(_get(FUEL_MIX_URL)))
+
+
+# --- day-ahead market (the market's own forecast) ------------------------------
+
+def dam_url(day) -> str:
+    return f"{BASE}/content/cdr/html/{day:%Y%m%d}_dam_spp.html"
+
+
+def parse_dam(html: str) -> dict[str, list[tuple[datetime, float]]]:
+    """Day-ahead hourly SPP table -> {point: [(hour_start_utc, price)]}.
+
+    ERCOT publishes the next operating day's prices around 13:30 Central, so in
+    the evening the planner already knows the market's price for every hour
+    until morning.
+    """
+    rows = re.findall(r"<tr>(.*?)</tr>", html, re.DOTALL)
+    table = [[re.sub(r"<[^>]+>", "", c).strip() for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", r, re.DOTALL)]
+             for r in rows]
+    table = [r for r in table if r]
+    if not table:
+        return {}  # page exists but the day hasn't been published yet
+    header, body = table[0], table[1:]
+    out: dict[str, list[tuple[datetime, float]]] = {h: [] for h in header[2:]}
+    for r in body:
+        m, d, y = (int(x) for x in r[0].split("/"))
+        he = r[1].rstrip("*")
+        start = (datetime(y, m, d, tzinfo=CENTRAL) + timedelta(hours=int(he) - 1)).astimezone(timezone.utc)
+        for name, val in zip(header[2:], r[2:]):
+            if val:
+                out[name].append((start, float(val)))
+    return out
+
+
+def day_ahead_prices(day, point: str = "LZ_NORTH") -> list[tuple[datetime, float]]:
+    """Hourly day-ahead prices for one point; empty if not yet published."""
+    return parse_dam(_get(dam_url(day)).decode()).get(point, [])

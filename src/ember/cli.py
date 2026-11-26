@@ -6,6 +6,7 @@
   ember firms    --bbox W,S,E,N --source ...     record FIRMS detections + latency
   ember grid now --zone LZ_NORTH                 live ERCOT price + grid carbon intensity
   ember grid backtest --year 2025                charging strategies on a year of real prices
+  ember tesla keygen | register | login | status | plan    Tesla Fleet API (run on your own machine)
 """
 
 from __future__ import annotations
@@ -128,6 +129,103 @@ def cmd_grid_backtest(a: argparse.Namespace) -> int:
     return 0
 
 
+def _tesla_client(a: argparse.Namespace):
+    from .tesla.fleet import Credentials, FleetClient
+
+    return FleetClient(Credentials.from_env(), dry_run=not getattr(a, "live", False))
+
+
+def cmd_tesla_keygen(a: argparse.Namespace) -> int:
+    import subprocess
+    from pathlib import Path
+
+    from .tesla.fleet import HOME
+
+    priv = HOME / "tesla-private-key.pem"
+    if priv.exists() and not a.force:
+        print(f"{priv} already exists (use --force to replace; re-pairing the car would be required)", file=sys.stderr)
+        return 1
+    HOME.mkdir(parents=True, exist_ok=True, mode=0o700)
+    subprocess.run(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", str(priv)], check=True)
+    os.chmod(priv, 0o600)
+    pub = Path(a.out)
+    pub.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["openssl", "ec", "-in", str(priv), "-pubout", "-out", str(pub)], check=True,
+                   stderr=subprocess.DEVNULL)
+    print(f"private key: {priv}  (keep secret, never commit)")
+    print(f"public key:  {pub}   (publish at https://<domain>/.well-known/appspecific/com.tesla.3p.public-key.pem)")
+    return 0
+
+
+def cmd_tesla_register(a: argparse.Namespace) -> int:
+    from .tesla.fleet import Credentials, register_partner
+
+    r = register_partner(Credentials.from_env(), a.domain)
+    print("registered:", {k: v for k, v in r.get("response", r).items() if k in ("domain", "client_id", "name")})
+    return 0
+
+
+def cmd_tesla_login(a: argparse.Namespace) -> int:
+    import webbrowser
+
+    from .tesla.fleet import Credentials, authorize_url, exchange_code, wait_for_callback
+
+    creds = Credentials.from_env()
+    url, state = authorize_url(creds)
+    print("Open this URL and sign in with the car owner's Tesla account:\n\n" + url + "\n")
+    if a.paste:
+        code = input("Paste the code shown on the callback page: ").strip()
+    else:
+        webbrowser.open(url)
+        code = wait_for_callback(expected_state=state)
+    tokens = exchange_code(creds, code)
+    tokens.save()
+    print(f"logged in; tokens saved to {tokens.PATH} (mode 600)")
+    return 0
+
+
+def cmd_tesla_status(a: argparse.Namespace) -> int:
+    c = _tesla_client(a)
+    for v in c.vehicles():
+        vin = v["vin"]
+        print(f"{v.get('display_name') or 'vehicle'} (VIN ...{vin[-4:]}): {v.get('state')}")
+        if v.get("state") != "online":
+            print("  asleep; not waking it (wake-ups are the most expensive call). Try again when it's awake.")
+            continue
+        cs = c.charge_state(vin)
+        keys = ("battery_level", "charge_limit_soc", "charging_state", "charge_current_request",
+                "charge_current_request_max", "charger_actual_current", "conn_charge_cable")
+        for k in keys:
+            print(f"  {k:<28} {cs.get(k)}")
+    print("API budget this month:", c.budget.usage())
+    return 0
+
+
+def cmd_tesla_plan(a: argparse.Namespace) -> int:
+    from datetime import datetime, timedelta, timezone
+
+    from .charging.optimizer import Vehicle
+    from .charging.tonight import plan_tonight
+    from .grid.ercot import CENTRAL, day_ahead_prices
+
+    soc, target = a.soc, a.target
+    if soc is None:
+        c = _tesla_client(a)
+        vin = a.vin or c.vehicles()[0]["vin"]
+        cs = c.charge_state(vin)
+        soc, target = cs["battery_level"], target or cs["charge_limit_soc"]
+    today = datetime.now(CENTRAL).date()
+    hourly = day_ahead_prices(today, a.zone) + day_ahead_prices(today + timedelta(days=1), a.zone)
+    hh, mm = (int(x) for x in a.depart.split(":"))
+    from datetime import time as dtime
+
+    plan = plan_tonight(hourly, soc, target or 80, Vehicle(charger_kw=a.charger_kw, battery_kwh=a.battery_kwh),
+                        datetime.now(timezone.utc), depart=dtime(hh, mm))
+    print(f"Battery {soc:.0f}% -> {target or 80:.0f}% by {a.depart} CT, {a.zone} day-ahead prices (dry-run)\n")
+    print(plan.summary())
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="ember", description="Cloud satellite ground station for wildfire detection")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -177,6 +275,30 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--charger-kw", type=float, default=11.5)
     s.add_argument("--data-dir", default="data")
     s.set_defaults(func=cmd_grid_backtest)
+
+    t = sub.add_parser("tesla", help="Tesla Fleet API: charging only, dry-run by default")
+    tsub = t.add_subparsers(dest="tesla_cmd", required=True)
+    s = tsub.add_parser("keygen", help="generate the app's P-256 key pair (private key stays in ~/.ember)")
+    s.add_argument("--out", default="com.tesla.3p.public-key.pem")
+    s.add_argument("--force", action="store_true")
+    s.set_defaults(func=cmd_tesla_keygen)
+    s = tsub.add_parser("register", help="one-time partner registration of the domain hosting the public key")
+    s.add_argument("--domain", default="keen2640.github.io")
+    s.set_defaults(func=cmd_tesla_register)
+    s = tsub.add_parser("login", help="OAuth login as the car owner (opens a browser)")
+    s.add_argument("--paste", action="store_true", help="paste the code from the GitHub Pages callback instead")
+    s.set_defaults(func=cmd_tesla_login)
+    s = tsub.add_parser("status", help="vehicles and charge state (never wakes the car)")
+    s.set_defaults(func=cmd_tesla_status)
+    s = tsub.add_parser("plan", help="tonight's charging plan from day-ahead prices (dry-run)")
+    s.add_argument("--soc", type=float, help="current battery %% (skip to read it from the car)")
+    s.add_argument("--target", type=float)
+    s.add_argument("--depart", default="07:00")
+    s.add_argument("--zone", default="LZ_NORTH")
+    s.add_argument("--vin")
+    s.add_argument("--charger-kw", type=float, default=11.5)
+    s.add_argument("--battery-kwh", type=float, default=75.0)
+    s.set_defaults(func=cmd_tesla_plan)
 
     a = p.parse_args(argv)
     if a.cmd == "firms" and not a.source:
