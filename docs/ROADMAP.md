@@ -15,12 +15,13 @@ start over FIRMS. Paid steps are marked 💲; everything else is free.
 ## Grid track (current focus)
 - [x] ERCOT live + historical prices, live fuel mix, carbon intensity, EIA client
 - [x] Exact charging optimizer + backtester (immediate / off-peak / forecast / oracle)
-- [ ] Forecasters: gradient boosting with load/wind/temperature features, quantile spike model; target the 6.4% → 18.7% gap
+- [x] Forecasters: day-ahead strategy, gradient-boosted residual model, MPC; strict train-2024 / test-2025 protocol
 - [ ] Multi-year backtests (2021 Winter Storm Uri, 2023 heat emergencies), carbon-weighted objective
 - [x] Tesla Fleet API module: OAuth, partner registration, allowlisted charging commands, dry-run, request budget
 - [x] Tonight planner from ERCOT day-ahead prices → timed charging commands
 - [ ] Owner setup on a real car: keys on GitHub Pages, register, login, virtual key pairing
-- [ ] Day-ahead price as a backtest strategy and forecast feature
+- [x] Day-ahead price as a backtest strategy and forecast feature
+- [x] One-command Mac setup script (scripts/setup_tesla_mac.sh)
 - [ ] Fleet Telemetry receiver on AWS + TimescaleDB
 - [ ] Re-plan every 15 min (MPC) on the real car; 8-week measured results
 - [ ] GOES-19 solar nowcasting feature

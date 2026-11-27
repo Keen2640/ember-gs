@@ -1,5 +1,5 @@
 import itertools
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import numpy as np
 import pytest
@@ -126,6 +126,71 @@ def test_backtest_ordering_on_synthetic_prices():
     r = run(synthetic_series(), BacktestConfig(energy_kwh=20.0))
     assert r.sessions > 15
     t = r.total_usd
-    assert t["oracle"] <= t["forecast"] + 1e-9
+    assert set(t) == {"immediate", "offpeak", "naive", "oracle"}  # no day-ahead data, no model
+    assert t["oracle"] <= t["naive"] + 1e-9
     assert t["oracle"] <= t["offpeak"] + 1e-9
-    assert t["forecast"] < t["immediate"]
+    assert t["naive"] < t["immediate"]
+
+
+# --- day-ahead, ML forecaster, MPC ------------------------------------------------
+
+from ember.charging import forecast as fc
+from ember.grid.ercot import parse_dam_archive_rows
+
+
+def test_dam_archive_expands_to_15min():
+    rows = [("01/01/2025", "01:00", "N", "LZ_NORTH", 23.0), ("01/01/2025", "02:00", "N", "LZ_NORTH", 25.0),
+            ("01/01/2025", "01:00", "N", "HB_NORTH", 99.0)]
+    s = parse_dam_archive_rows(rows, "LZ_NORTH")
+    assert len(s) == 8 and list(s.price) == [23.0] * 4 + [25.0] * 4
+    assert s.start_utc[0] == np.datetime64("2025-01-01T06:00:00")
+
+
+def _dam_for(rt: PriceSeries, noise=0.0, seed=0):
+    rng = np.random.default_rng(seed)
+    return PriceSeries("DAM", rt.start_utc.copy(), rt.price + rng.normal(0, noise, len(rt)))
+
+
+def test_dayahead_and_ml_strategies_run():
+    rt = synthetic_series(days=60)
+    dam = _dam_for(rt, noise=5.0)
+    cfg = BacktestConfig(energy_kwh=20.0)
+    g = fc.Grid.build(rt, dam)
+    from ember.charging.backtest import training_set
+    X, y = training_set(g, cfg, date(2025, 3, 9), date(2025, 4, 10))
+    assert X.shape[1] == len(fc.FEATURES) and len(X) == len(y)
+    m = fc.MLForecaster(max_iter=20).fit(X, y)
+    r = run(rt, cfg, dam=dam, model=m, first=date(2025, 4, 11), last=date(2025, 4, 25))
+    assert set(r.total_usd) == {"immediate", "offpeak", "naive", "dayahead", "ml", "oracle"}
+    assert r.total_usd["oracle"] <= min(r.total_usd.values()) + 1e-9
+
+
+def test_residual_forecaster_defaults_to_dayahead_when_no_signal():
+    rng = np.random.default_rng(0)
+    X = np.column_stack([rng.uniform(10, 50, 2000), rng.normal(size=(2000, len(fc.FEATURES) - 1))])
+    y = X[:, 0].copy()  # real-time == day-ahead exactly
+    m = fc.MLForecaster().fit(X, y)
+    assert np.allclose(m.predict(X), X[:, 0], atol=1e-6)
+
+
+def test_mpc_rho0_equals_dayahead_and_meets_target():
+    rng = np.random.default_rng(3)
+    dam = rng.uniform(10, 60, 52)
+    rt = dam + rng.normal(0, 30, 52)
+    v = Vehicle()
+    g = fc.mpc_schedule(dam, rt, 30.0, v, rho=0.0)
+    da = optimal_schedule(dam, 30.0, v).grid_kwh
+    assert np.allclose(g, da)
+    for rho in (0.5, 0.9):
+        g = fc.mpc_schedule(dam, rt, 30.0, v, rho=rho)
+        assert g.sum() * v.efficiency == pytest.approx(30.0)
+        assert (g <= v.charger_kw * 0.25 + 1e-9).all()
+
+
+def test_mpc_never_misses_departure_when_tight():
+    v = Vehicle()
+    dam = np.linspace(100, 0, 12)  # cheapest at the end tempts waiting
+    rt = dam.copy()
+    need = 11.5 * 0.25 * 12 * 0.9  # every slot required
+    g = fc.mpc_schedule(dam, rt, need, v, rho=0.9)
+    assert g.sum() * v.efficiency == pytest.approx(need)

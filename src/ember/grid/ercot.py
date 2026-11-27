@@ -125,6 +125,60 @@ def download_year(year: int, point: str = "LZ_NORTH") -> PriceSeries:
     raise LookupError(f"no ERCOT price archive for {year}")
 
 
+def parse_dam_archive_rows(rows, point: str) -> PriceSeries:
+    """Day-ahead archive rows (date, 'HH:00' hour ending, repeated flag, point, price) -> 15-min series.
+
+    Each hourly day-ahead price is repeated over its four 15-minute intervals,
+    so it lines up with the real-time series slot for slot.
+    """
+    times, prices = [], []
+    for r in rows:
+        if not r or r[3] != point:
+            continue
+        he = int(str(r[1]).split(":")[0])
+        start = interval_start_utc(r[0], he, 1, str(r[2]).upper() == "Y")
+        for k in range(4):
+            times.append(np.datetime64((start + k * INTERVAL).replace(tzinfo=None), "s"))
+            prices.append(float(r[4]))
+    order = np.argsort(np.array(times))
+    t_sorted = np.array(times)[order]
+    if len(t_sorted) > 1 and (np.diff(t_sorted) == np.timedelta64(0, "s")).any():
+        raise ValueError(f"duplicate day-ahead intervals for {point}")
+    return PriceSeries(point, t_sorted, np.array(prices)[order])
+
+
+def parse_dam_archive_zip(raw: bytes, point: str = "LZ_NORTH") -> PriceSeries:
+    import openpyxl
+
+    z = zipfile.ZipFile(io.BytesIO(raw))
+    wb = openpyxl.load_workbook(io.BytesIO(z.read(z.namelist()[0])), read_only=True)
+
+    def rows():
+        for ws in wb.worksheets:
+            it = ws.iter_rows(values_only=True)
+            next(it, None)
+            yield from it
+
+    return parse_dam_archive_rows(rows(), point)
+
+
+HISTORICAL_DAM_REPORT = 13060
+
+
+def download_dam_year(year: int, point: str = "LZ_NORTH") -> PriceSeries:
+    for name, url in list_report_files(HISTORICAL_DAM_REPORT):
+        if name.endswith(f"_{year}.zip"):
+            return parse_dam_archive_zip(_get(url, timeout=300), point)
+    raise LookupError(f"no ERCOT day-ahead archive for {year}")
+
+
+def concat(series: list[PriceSeries]) -> PriceSeries:
+    t = np.concatenate([s.start_utc for s in series])
+    p = np.concatenate([s.price for s in series])
+    order = np.argsort(t)
+    return PriceSeries(series[0].point, t[order], p[order])
+
+
 # --- live data -----------------------------------------------------------------
 
 def parse_live_spp(html: str) -> dict[str, list[tuple[datetime, float]]]:

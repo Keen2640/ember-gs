@@ -38,32 +38,42 @@ plant, measured against real ERCOT history.
 | EIA v2 client with retry/backoff (multi-year carbon history) | ✅ (EIA was returning 504s on the first try) |
 | Exact single-session optimizer (fractional knapsack, brute-force verified) | ✅ |
 | Backtester: immediate / off-peak / forecast / oracle, settled at real prices | ✅ |
-| Better forecasters (gradient boosting with weather + load features; quantiles for spikes) | ⏳ |
-| Stochastic MPC: re-plan every 15 min as new prices arrive | ⏳ |
+| Day-ahead strategy, ML residual forecaster, MPC, with train/validate/test protocol | ✅ |
+| 5-minute real-time prices (lower latency for spike reaction) | ⏳ |
 | Tesla Fleet API: OAuth, virtual key, signed commands, dry-run mode | ⏳ |
 | Fleet Telemetry receiver on AWS (mTLS, protobuf) | ⏳ |
 | GOES-19 solar nowcasting | ⏳ |
 | Fleet simulator + distributed coordination (ADMM), grid-emergency replays | ⏳ |
 
-## First result (2025, Dallas load zone LZ_NORTH, wholesale prices)
+## Results: single car, Dallas (LZ_NORTH)
 
-30 kWh per night, plug in 18:00, depart 07:00, 11.5 kW charger, 357 nights:
+Protocol: every forecaster sees only data available at plug-in (18:00 CT).
+Model choices were made on 2024 data only (train Jan-Sep, validate Oct-Dec),
+then **one** run on 2025, which no model saw. 30 kWh/night, depart 07:00,
+11.5 kW, settled at real-time prices. Reproduce with
+`ember grid backtest --year 2025 --train-year 2024`.
 
-| Strategy | $/year | ¢/kWh | Worst night | vs Tesla-style off-peak |
-|---|---|---|---|---|
-| Charge immediately | 693.97 | 6.48 | $28.31 | -110% |
-| Fixed off-peak (23:00 start) | 330.84 | 3.09 | $4.20 | baseline |
-| Seasonal-naive forecast + optimizer | 309.72 | 2.89 | $4.14 | **+6.4%** |
-| Perfect foresight (upper bound) | 269.06 | 2.51 | $3.77 | +18.7% |
+| Strategy | $/year | vs Tesla-style off-peak | Share of headroom captured |
+|---|---|---|---|
+| Charge immediately | 701.87 | -110% | n/a |
+| Fixed off-peak (23:00 start) | 334.72 | baseline | 0% |
+| Seasonal naive (last 7 days) | 313.55 | +6.3% | 34% |
+| **Day-ahead market price** | **306.17** | **+8.5%** | **46%** |
+| ML: gradient-boosted residual on day-ahead | 305.69 | +8.7% | 47% |
+| Re-plan every 15 min (MPC) | 306.17* | +8.5% | 46% |
+| Perfect foresight (upper bound) | 272.55 | +18.6% | 100% |
 
-Takeaways:
-1. **"Don't charge at 6 pm" is most of the win** (52%). A fixed off-peak
-   schedule is a strong baseline, and any claim has to beat it, not the
-   naive one.
-2. **The forecast-to-oracle gap (6.4% → 18.7%) is the headroom for ML.** That
-   gap is the forecasting target.
-3. **One car's dollars are small.** The interesting numbers are at fleet
-   scale (MW of peak shifted during grid emergencies) and in carbon.
+\*MPC with any persistence of the latest real-time/day-ahead gap was *worse*
+than ignoring it on 2024 validation (by 4.5–9%), so model selection chose
+ρ = 0, which reduces to the day-ahead plan.
+
+### What we learned
+
+1. **"Don't charge at 6 pm" is most of the win** (52%). Any claim has to beat a fixed off-peak schedule, not the naive one.
+2. **The day-ahead market is a strong forecaster.** It beats the seasonal naive model and captures almost half the headroom with no ML at all.
+3. **ML on top of day-ahead adds little** (+0.2 points on test). Predicting the *direct* price lost to day-ahead; predicting the *residual* won validation but ties on test. At 18:00 the market has already priced what is knowable about the night.
+4. **Reacting to spikes doesn't work with 15-minute settlement prices.** ERCOT spikes are short. By the time an interval's price is published the spike is usually over, so chasing it makes things worse.
+5. **The remaining ~54% of headroom is unforecastable spike noise at the single-car level.** For one car, the day-ahead plan is close to the best achievable. That redirects the effort to where the leverage is: **fleet coordination**, where thousands of cars following the same day-ahead signal create their own peak, and to carbon.
 
 ## The herding problem (the research core)
 

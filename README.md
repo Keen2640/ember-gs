@@ -13,18 +13,22 @@ Two systems built on one data platform:
 
 ```bash
 ember grid now                       # live Dallas price + grid carbon intensity
-ember grid backtest --year 2025      # charging strategies on a year of real 15-min prices
+ember grid backtest --year 2025 --train-year 2024   # train on 2024, test on 2025
 ```
 
 ```
-LZ_NORTH 2025: 357 nights, 30 kWh/night, 11.5 kW charger, wholesale prices
+LZ_NORTH 2025: 364 nights, 30 kWh/night, 11.5 kW charger, settled at real-time wholesale prices
 
-strategy      total $   ¢/kWh  worst night $  vs immediate  vs offpeak
-immediate      693.97    6.48          28.31         0.0%    -109.8%
-offpeak        330.84    3.09           4.20        52.3%       0.0%
-forecast       309.72    2.89           4.14        55.4%       6.4%
-oracle         269.06    2.51           3.77        61.2%      18.7%
+strategy     total $   ¢/kWh  worst night $  vs immediate  vs offpeak  headroom
+immediate     701.87    6.43          28.31         0.0%    -109.7%    -591%
+offpeak       334.72    3.07           4.20        52.3%       0.0%       0%
+naive         313.55    2.87           4.14        55.3%       6.3%      34%
+dayahead      306.17    2.80           6.99        56.4%       8.5%      46%
+ml            305.69    2.80           6.73        56.4%       8.7%      47%
+oracle        272.55    2.50           3.77        61.2%      18.6%     100%
 ```
+
+ML trained on 2024, tested once on 2025. The day-ahead market turns out to be very hard to beat for a single car; see the findings in [docs/GRID_DESIGN.md](docs/GRID_DESIGN.md).
 
 ---
 

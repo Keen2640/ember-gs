@@ -109,22 +109,41 @@ def cmd_grid_now(a: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_grid_backtest(a: argparse.Namespace) -> int:
-    from .charging.backtest import BacktestConfig, run
-    from .charging.optimizer import Vehicle
-    from .grid.ercot import PriceSeries, download_year
+def _load_year(kind: str, year: int, zone: str, data_dir: str):
+    from .grid.ercot import PriceSeries, download_dam_year, download_year
 
-    path = os.path.join(a.data_dir, f"ercot_{a.zone}_{a.year}.npz")
+    name = f"ercot_{'dam_' if kind == 'dam' else ''}{zone}_{year}.npz"
+    path = os.path.join(data_dir, name)
     if os.path.exists(path):
-        series = PriceSeries.load(path)
-    else:
-        print(f"downloading ERCOT {a.year} prices (about 15 MB, ~1 min to parse)...", file=sys.stderr)
-        series = download_year(a.year, a.zone)
-        os.makedirs(a.data_dir, exist_ok=True)
-        series.save(path)
+        return PriceSeries.load(path)
+    print(f"downloading ERCOT {kind} {year} prices...", file=sys.stderr)
+    s = (download_dam_year if kind == "dam" else download_year)(year, zone)
+    os.makedirs(data_dir, exist_ok=True)
+    s.save(path)
+    return s
+
+
+def cmd_grid_backtest(a: argparse.Namespace) -> int:
+    from datetime import date
+
+    from .charging import forecast as fc
+    from .charging.backtest import BacktestConfig, run, training_set
+    from .charging.optimizer import Vehicle
+    from .grid.ercot import concat
+
     cfg = BacktestConfig(energy_kwh=a.kwh, vehicle=Vehicle(charger_kw=a.charger_kw))
-    r = run(series, cfg)
-    print(f"{a.zone} {a.year}: {r.sessions} nights, {a.kwh:g} kWh/night, {a.charger_kw:g} kW charger, wholesale prices\n")
+    years = sorted({a.year} | ({a.train_year} if a.train_year else set()) | {a.year - 1})
+    rt = concat([_load_year("rt", y, a.zone, a.data_dir) for y in years])
+    dam = concat([_load_year("dam", y, a.zone, a.data_dir) for y in years])
+    model = None
+    if a.train_year:
+        g = fc.Grid.build(rt, dam)
+        X, y = training_set(g, cfg, date(a.train_year, 1, 8), date(a.train_year, 12, 31))
+        model = fc.MLForecaster().fit(X, y)
+        print(f"ML forecaster trained on {a.train_year}: {len(y):,} slots", file=sys.stderr)
+    r = run(rt, cfg, dam=dam, model=model, first=date(a.year, 1, 1), last=date(a.year, 12, 30))
+    print(f"{a.zone} {a.year}: {r.sessions} nights, {a.kwh:g} kWh/night, {a.charger_kw:g} kW charger, "
+          f"settled at real-time wholesale prices\n")
     print(r.table())
     return 0
 
@@ -269,7 +288,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--zone", default="LZ_NORTH", help="LZ_NORTH (Dallas), LZ_HOUSTON, LZ_SOUTH, LZ_WEST, ...")
     s.set_defaults(func=cmd_grid_now)
     s = gsub.add_parser("backtest", help="compare charging strategies on a year of ERCOT prices")
-    s.add_argument("--year", type=int, default=2025)
+    s.add_argument("--year", type=int, default=2025, help="test year")
+    s.add_argument("--train-year", type=int, help="train the ML forecaster on this (earlier) year")
     s.add_argument("--zone", default="LZ_NORTH")
     s.add_argument("--kwh", type=float, default=30.0, help="energy added per night")
     s.add_argument("--charger-kw", type=float, default=11.5)

@@ -8,6 +8,18 @@ What the app can do: read charge state, and start/stop charging, set charging
 amps and set the charge limit. Nothing else is on the allowlist (see
 `src/ember/tesla/fleet.py`), and every command is **dry-run** unless you pass `--live`.
 
+## Quick path: one script for steps 0-2
+
+```bash
+git clone https://github.com/Keen2640/ember-gs && cd ember-gs && bash scripts/setup_tesla_mac.sh
+```
+
+It installs everything, asks for the Client ID and Secret (the secret is hidden
+while you type), stores them in `~/.ember/.env` with owner-only permissions,
+generates the key pair and prints the **public** key. Then continue at step 3.
+
+The manual steps below do the same thing.
+
 ## 0. Install (once)
 
 ```bash

@@ -91,3 +91,28 @@ nothing rather than crashing.
 **Cost discipline.** Tesla meters API calls; wake-ups are the most expensive.
 `status` never wakes the car, and a persistent per-month budget refuses calls
 past the caps.
+
+## Day 4: can ML beat the market?
+
+**Protocol first.** Every model choice was made on 2024 (train Jan-Sep,
+validate Oct-Dec), then tested once on 2025. Without that discipline it's
+easy to tune on the test year and report a number that won't hold up.
+
+**Day-ahead beats seasonal naive** (+8.5% vs +6.3% over off-peak on 2025).
+The market's forecast is better than "same as last week."
+
+**Direct ML lost to day-ahead** (+5.9%). Switching the target to the
+*residual* (real-time minus day-ahead), with shrinkage toward day-ahead, won
+validation (+12.7% vs +9.7%) but only ties day-ahead on test (+8.7% vs +8.5%).
+
+**MPC made things worse.** Re-planning every 15 minutes with the latest
+real-time/day-ahead gap carried forward lost 4.5-9% on validation for every
+persistence value. ERCOT spikes are short and mean-revert, and a 15-minute
+settlement price arrives after the spike. Model selection picked "ignore it"
+(ρ = 0). The code and tests stay so the result is reproducible, and 5-minute
+prices are the next thing to try.
+
+**Takeaway.** For one car, the day-ahead plan is close to the best
+achievable; the remaining headroom is noise you can't see coming. The
+leverage is at fleet scale, where everyone following the same cheap hours
+creates a new peak.
